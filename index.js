@@ -1,11 +1,13 @@
 import express from 'express';
 import axios from 'axios';
 import cors from 'cors';
+import dotenv from 'dotenv';
 
+dotenv.config();
 const app = express();
 app.use(cors());
 
-// 🟢 Route for upcoming contests
+// Route for upcoming contests
 app.get('/', async (req, res) => {
   try {
     const response = await axios.post(
@@ -42,25 +44,28 @@ app.get('/', async (req, res) => {
 
     res.json(contests);
   } catch (error) {
-    console.error('LeetCode GraphQL Fetch Error:', error.message);
+    console.error('LeetCode Contest Fetch Error:', error.message);
     res.status(500).json({ error: 'Failed to fetch LeetCode contests' });
   }
 });
 
-// 🟣 New Route: /all => all problems
+// Route for LeetCode Problems
 app.get('/all', async (req, res) => {
+  const limit = parseInt(req.query.limit) || 50;
+  const skip = parseInt(req.query.skip) || 0;
+
   try {
     const response = await axios.post(
       'https://leetcode.com/graphql',
       {
         query: `
-          query problemsetQuestionList($limit: Int, $skip: Int) {
-            problemsetQuestionList: questionList(
-              limit: $limit
+          query getQuestionList($categorySlug: String!, $limit: Int!, $skip: Int!) {
+            problemsetQuestionListV2(
+              categorySlug: $categorySlug,
+              limit: $limit,
               skip: $skip
-              filters: {}
             ) {
-              total
+              hasMore
               questions {
                 title
                 titleSlug
@@ -73,8 +78,9 @@ app.get('/all', async (req, res) => {
           }
         `,
         variables: {
-          limit: 1000,
-          skip: 0,
+          categorySlug: "algorithms",
+          limit,
+          skip,
         }
       },
       {
@@ -82,28 +88,44 @@ app.get('/all', async (req, res) => {
           'Content-Type': 'application/json',
           'Referer': 'https://leetcode.com/problemset/all/',
           'User-Agent': 'Mozilla/5.0',
-        }
+          'cookie': `LEETCODE_SESSION=${process.env.LEETCODE_SESSION}; csrftoken=${process.env.LEETCODE_CSRF}`,
+          'x-csrftoken': process.env.LEETCODE_CSRF,
+        },
       }
     );
 
-    const problems = response.data.data.problemsetQuestionList.questions;
+    const data = response.data?.data?.problemsetQuestionListV2;
 
-    const formatted = problems.map((q) => ({
+    if (!data || !Array.isArray(data.questions)) {
+      console.error("Invalid structure:", response.data);
+      return res.status(500).json({ error: "LeetCode response structure invalid" });
+    }
+
+    const formatted = data.questions.map((q) => ({
       title: q.title,
       slug: q.titleSlug,
       difficulty: q.difficulty,
       tags: q.topicTags.map(t => t.name),
-      url: `https://leetcode.com/problems/${q.titleSlug}/`
+      url: `https://leetcode.com/problems/${q.titleSlug}/`,
     }));
 
-    res.json(formatted);
+    res.json({
+      hasMore: data.hasMore,
+      problems: formatted,
+    });
+
   } catch (error) {
-    console.error('LeetCode Problems Fetch Error:', error.message);
-    res.status(500).json({ error: 'Failed to fetch LeetCode problems' });
+    console.error("LeetCode Problems Fetch Error:");
+    console.error(error.response?.data || error.message || error);
+    res.status(500).json({ error: "Failed to fetch LeetCode problems" });
   }
 });
 
+
+
+
+
 const port = process.env.PORT || 3000;
 app.listen(port, () => {
-  console.log(`✅ Server running on port ${port}`);
+  console.log(`Server running on port ${port}`);
 });
